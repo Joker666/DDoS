@@ -3,15 +3,8 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from xgboost import XGBClassifier
@@ -184,48 +177,148 @@ print(f"Test Recall: {test_recall:.4f}")
 print(f"Test F1 Score: {test_f1:.4f}")
 
 # # Get feature importances
-importance = model.feature_importances_
+# importance = model.feature_importances_
 
 # We need to use the column names from before encoding
 feature_names = X_train.columns.tolist()
 
-# Create a dataframe of feature names and their importance scores
-feature_importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importance})
+# # Create a dataframe of feature names and their importance scores
+# feature_importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importance})
 
-# Sort by importance
-feature_importance_df = feature_importance_df.sort_values("Importance", ascending=False)
+# # Sort by importance
+# feature_importance_df = feature_importance_df.sort_values("Importance", ascending=False)
 
-# Display top 20 most important features
-print("\nTop 20 Most Important Features:")
-print(feature_importance_df.head(20))
+# # Display top 20 most important features
+# print("\nTop 20 Most Important Features:")
+# print(feature_importance_df.head(20))
 
-# Optionally, visualize with a bar plot
-plt.figure(figsize=(12, 8))
-plt.barh(feature_importance_df["Feature"][:20], feature_importance_df["Importance"][:20])
-plt.xlabel("Importance")
-plt.ylabel("Feature")
-plt.title("Top 20 Feature Importance")
-plt.gca().invert_yaxis()  # To have the highest importance at the top
-plt.tight_layout()
-plt.savefig("cic_feature_importance.png")
+# # Optionally, visualize with a bar plot
+# plt.figure(figsize=(12, 8))
+# plt.barh(feature_importance_df["Feature"][:20], feature_importance_df["Importance"][:20])
+# plt.xlabel("Importance")
+# plt.ylabel("Feature")
+# plt.title("Top 20 Feature Importance")
+# plt.gca().invert_yaxis()  # To have the highest importance at the top
+# plt.tight_layout()
+# plt.savefig("cic_feature_importance.png")
+# plt.show()
+
+
+# # Get original class names from the label encoder
+# class_names = le.classes_
+
+# # Create confusion matrix for test data
+# cm = confusion_matrix(y_test, y_test_pred)
+
+# # Plot the confusion matrix
+# plt.figure(figsize=(12, 10))
+# sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
+# plt.xlabel("Predicted")
+# plt.ylabel("True")
+# plt.title("Confusion Matrix")
+# plt.tight_layout()
+# plt.savefig("cic_confusion_matrix.png")
+# plt.show()
+
+# print("\nClassification Report:")
+# print(classification_report(y_test, y_test_pred, target_names=class_names))
+
+
+# Function to display top important features for a class
+def display_top_features_for_class(class_index, class_name, n_top=10):
+    print(f"\nTop {n_top} features for class: {class_name}")
+
+    # Create a binary classification problem (one-vs-rest)
+    y_train_binary = np.where(y_train == class_index, 1, 0)
+
+    # Train a new model specifically for this class
+    class_model = XGBClassifier(
+        use_label_encoder=False,
+        eval_metric="logloss",
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.1,
+        random_state=42,
+    )
+    class_model.fit(X_train_encoded, y_train_binary)
+
+    # Get feature importances for this specific class
+    importance = class_model.feature_importances_
+
+    # Create a dataframe of feature names and their importance scores
+    feature_importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importance})
+
+    # Sort by importance
+    feature_importance_df = feature_importance_df.sort_values("Importance", ascending=False)
+
+    # Display top N features
+    print(feature_importance_df.head(n_top))
+
+    return feature_importance_df
+
+
+def analyze_permutation_importance(class_index, class_name, n_top=10):
+    print(f"\nPermutation Importance for class: {class_name}")
+
+    # Create a binary classification problem (one-vs-rest)
+    y_test_binary = np.where(y_test == class_index, 1, 0)
+
+    # Train a new model specifically for this class
+    class_model = XGBClassifier(
+        use_label_encoder=False,
+        eval_metric="logloss",
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.1,
+        random_state=42,
+    )
+    class_model.fit(X_train_encoded, np.where(y_train == class_index, 1, 0))
+
+    # Calculate permutation importance on test set
+    perm_importance = permutation_importance(
+        class_model, X_test_encoded, y_test_binary, n_repeats=10, random_state=42, n_jobs=-1
+    )
+
+    # Create a dataframe with feature importance
+    perm_importance_df = pd.DataFrame({"Feature": feature_names, "Importance": perm_importance.importances_mean})
+
+    # Sort by importance
+    perm_importance_df = perm_importance_df.sort_values("Importance", ascending=False)
+
+    # Display top N features
+    print(perm_importance_df.head(n_top))
+
+    return perm_importance_df
+
+
+# Get feature importance for each class
+class_importance_results = {}
+permutation_importance_results = {}
+
+print("\n=== Per-Class Feature Importance Analysis ===")
+
+# Iterate through each class
+for class_index, class_name in enumerate(le.classes_):
+    print(f"\n{'=' * 50}")
+    print(f"Analyzing class: {class_name} (index: {class_index})")
+
+    # Get important features using direct model training
+    class_importance_results[class_name] = display_top_features_for_class(class_index, class_name)
+
+    # Get important features using permutation importance
+    permutation_importance_results[class_name] = analyze_permutation_importance(class_index, class_name)
+
+plt.figure(figsize=(15, len(le.classes_) * 3))
+
+for i, class_name in enumerate(le.classes_):
+    # Get the top 5 features for this class
+    top_features = class_importance_results[class_name].head(5)
+
+    # Create subplot
+    plt.subplot(len(le.classes_), 1, i + 1)
+    plt.barh(top_features["Feature"], top_features["Importance"])
+    plt.title(f"Top 5 features for {class_name}")
+    plt.tight_layout()
+
+plt.savefig("cic_per_class_feature_importance.png")
 plt.show()
-
-
-# Get original class names from the label encoder
-class_names = le.classes_
-
-# Create confusion matrix for test data
-cm = confusion_matrix(y_test, y_test_pred)
-
-# Plot the confusion matrix
-plt.figure(figsize=(12, 10))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
-plt.xlabel("Predicted")
-plt.ylabel("True")
-plt.title("Confusion Matrix")
-plt.tight_layout()
-plt.savefig("cic_confusion_matrix.png")
-plt.show()
-
-print("\nClassification Report:")
-print(classification_report(y_test, y_test_pred, target_names=class_names))
